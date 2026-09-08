@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>نظام التتبع الذكي والإنذار الميداني</title>
-  
+ 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
+ 
   <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -44,7 +44,7 @@
   <!-- 2. الخريطة الميدانية وأزرار التمركز -->
   <div class="relative">
     <div id="map" class="border-b-2 border-slate-700"></div>
-    
+   
     <!-- أدوات التمركز عائمة -->
     <div class="absolute bottom-3 left-3 z-20 flex flex-col gap-2">
       <button onclick="toggleAutoFollow()" id="followBtn" class="bg-slate-900/90 text-slate-400 p-2 rounded-full shadow-2xl border border-slate-600 text-[10px] font-bold">
@@ -58,23 +58,21 @@
 
   <!-- 3. لوحة التتبع وأدوات حفظ الموقع -->
   <main class="flex-1 p-3 flex flex-col justify-between space-y-2 overflow-y-auto">
-    
+   
     <!-- وحدة أدوات حفظ المواقع -->
     <div class="bg-slate-800/95 p-2.5 rounded-2xl border border-slate-700 flex justify-between items-center gap-2">
       <button onclick="saveCurrentLocation()" class="flex-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-2 rounded-xl text-xs transition flex items-center justify-center gap-1 shadow-md">
         💾 حفظ الموقع الحالي
       </button>
       <button onclick="toggleSavedLocationsList()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold px-3 py-2 rounded-xl text-xs transition">
-        📍 المواقع المحفوظة (<span id="savedCount">0</span>)
+        📍 المحفوظة (<span id="savedCount">0</span>)
       </button>
     </div>
 
-    <!-- قائمة المواقع المحفوظة (تظهر عند الضغط) -->
+    <!-- قائمة المواقع المحفوظة -->
     <div id="savedLocationsPanel" class="hidden bg-slate-800 p-3 rounded-2xl border border-slate-600 max-h-36 overflow-y-auto space-y-1.5 text-xs">
       <div class="font-bold text-amber-400 mb-1 border-b border-slate-700 pb-1">قائمة المواقع المحفوظة:</div>
-      <div id="savedListContainer" class="space-y-1">
-        <!-- يتم توليد العناصر هنا تلقائياً -->
-      </div>
+      <div id="savedListContainer" class="space-y-1"></div>
     </div>
 
     <!-- قسم تتبع رابط مشترك / إحداثيات -->
@@ -115,7 +113,6 @@
   </main>
 
   <script>
-    // 1. تهيئة الخريطة بأعلى دقة Esri Satellite
     const map = L.map('map', {
       zoomControl: false, tap: false, touchZoom: true, dragging: true
     }).setView([31.9882, 35.8654], 15);
@@ -148,13 +145,20 @@
     window.addEventListener('load', () => { fixMapSize(); updateSavedLocationsUI(); });
     window.addEventListener('resize', fixMapSize);
 
-    // 2. محرك التزمير الفوري والإنذار المباشر ("يزمر دغري")
+    // تفعيل نظام الصوت باللمس لتجاوز قيود متصفحات الهواتف
+    function initAudioOnMobile() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
     function startInstantAlarm() {
       if (!alarmInterval) {
         triggerAudioBeep(950);
-        alarmInterval = setInterval(() => {
-          triggerAudioBeep(950);
-        }, 250); // يزمر بسرعة متواصلة (كل 250 مللي ثانية)
+        alarmInterval = setInterval(() => { triggerAudioBeep(950); }, 250);
       }
     }
 
@@ -167,8 +171,7 @@
 
     function triggerAudioBeep(freq = 880) {
       try {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        initAudioOnMobile();
         const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
@@ -180,10 +183,9 @@
       } catch(e) {}
     }
 
-    // 3. إدارة حفظ واسترجاع المواقع
     function saveCurrentLocation() {
       if (!currentLat || !currentLng) {
-        alert("تنبيه: لم يتم تحديد موقعك الحالي بعد. يرجى الانتظار لحين التقاط إشارة الـ GPS.");
+        alert("تنبيه: لم يتم تحديد موقعك عبر الـ GPS حتى الآن. يرجى تفعيل الموقع والانتقال لمكان مكشوف.");
         return;
       }
       const defaultName = `موقع (${new Date().toLocaleTimeString('ar-JO', {hour: '2-digit', minute:'2-digit'})})`;
@@ -193,27 +195,26 @@
       let saved = JSON.parse(localStorage.getItem('userSavedLocations') || '[]');
       saved.push({ id: Date.now(), name: name, lat: currentLat, lng: currentLng });
       localStorage.setItem('userSavedLocations', JSON.stringify(saved));
-      
+     
       updateSavedLocationsUI();
       alert("تم حفظ الموقع بنجاح! 💾");
     }
 
     function toggleSavedLocationsList() {
-      const panel = document.getElementById('savedLocationsPanel');
-      panel.classList.toggle('hidden');
+      document.getElementById('savedLocationsPanel').classList.toggle('hidden');
     }
 
     function updateSavedLocationsUI() {
       let saved = JSON.parse(localStorage.getItem('userSavedLocations') || '[]');
       document.getElementById('savedCount').innerText = saved.length;
       const container = document.getElementById('savedListContainer');
-      
+     
       if (saved.length === 0) {
         container.innerHTML = '<div class="text-slate-500 text-[11px]">لا توجد مواقع محفوظة حالياً.</div>';
         return;
       }
 
-      container.innerHTML = saved.map((item, idx) => `
+      container.innerHTML = saved.map((item) => `
         <div class="flex justify-between items-center bg-slate-900 p-2 rounded-lg border border-slate-700">
           <span class="font-bold text-slate-200 text-xs">${item.name}</span>
           <div class="flex gap-1">
@@ -236,14 +237,12 @@
       updateSavedLocationsUI();
     }
 
-    // 4. خانة البحث عن الموقع
     async function searchLocation() {
       const query = document.getElementById('searchInput').value.trim();
       const status = document.getElementById('searchStatus');
       if (!query) return;
 
       status.innerText = "⏳ جاري البحث عن الموقع...";
-      
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
         const data = await res.json();
@@ -264,7 +263,6 @@
       }
     }
 
-    // 5. محرك التتبع وحساب مسافات الحدود والإنذار
     function toggleAutoFollow() {
       autoFollow = !autoFollow;
       const btn = document.getElementById('followBtn');
@@ -272,10 +270,13 @@
     }
 
     function locateUserNow() {
+      initAudioOnMobile();
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition((position) => {
           map.flyTo([position.coords.latitude, position.coords.longitude], 18);
-        }, null, { enableHighAccuracy: true });
+        }, (err) => {
+          alert("تعذر تحديد موقعك. يرجى التاكد من تفعيل خدمة الـ GPS على الهاتف والسماح للمتصفح الوصول للموقع.");
+        }, { enableHighAccuracy: true });
       }
     }
 
@@ -350,18 +351,19 @@
     }
 
     function toggleTracking() {
+      initAudioOnMobile(); // إيقاظ الصوت فور الضغط
       const btn = document.getElementById('trackBtn');
       if (!isTracking) {
         if (drawnPoints.length < 3 && !targetLatLng) {
-          alert("يرجى تحديد مسار/حدود على الخريطة أولاً بالنقر على النقاط.");
+          alert("يرجى تحديد حدود على الخريطة أولاً بالنقر على 3 نقاط على الأقل.");
           return;
         }
         isTracking = true;
         btn.innerHTML = "⏹️ إيقاف التتبع";
         btn.classList.replace('bg-blue-600', 'bg-slate-700');
         if ("geolocation" in navigator) {
-          watchId = navigator.geolocation.watchPosition(updatePosition, null, {
-            enableHighAccuracy: true, maximumAge: 0, timeout: 5000
+          watchId = navigator.geolocation.watchPosition(updatePosition, handleGpsError, {
+            enableHighAccuracy: true, maximumAge: 0, timeout: 10000
           });
         }
       } else {
@@ -372,6 +374,10 @@
         stopInstantAlarm();
         resetUI();
       }
+    }
+
+    function handleGpsError(err) {
+      alert("⚠️ تعذر تحديد موقع الـ GPS! يرجى التأكد من تفعيل زر (الموقع/Location) على هاتفك وإعطاء المتصفح الإذن بالوصول للموقع.");
     }
 
     function updatePosition(position) {
@@ -401,7 +407,6 @@
         accuracyCircle.setRadius(acc);
       }
 
-      // تحليلات النطاق والإنذار الفوري
       if (drawnPoints.length >= 3) {
         const isInside = isInsideBoundary([lat, lng], drawnPoints);
         const distanceToEdge = getMinDistanceToPolygonEdge(lat, lng, drawnPoints);
@@ -413,26 +418,22 @@
 
         if (isInside) {
           if (distanceToEdge <= 15) {
-            // اقتراب من الحدود
             stopInstantAlarm();
             body.className = "min-h-screen warning-pulse-amber text-white flex flex-col font-sans select-none";
             icon.innerText = "⚠️";
             title.innerText = `انتبه: تقترب من الحدود! (${Math.round(distanceToEdge)} م)`;
             triggerAudioBeep(650);
           } else {
-            // آمن داخل الحدود
             stopInstantAlarm();
             body.className = "min-h-screen bg-emerald-950 text-white flex flex-col font-sans select-none";
             icon.innerText = "🛡️";
             title.innerText = "داخل المسار/النطاق الآمن";
           }
         } else {
-          // 🚨 الخروج عن المسار: يزمر دغري وبشكل متواصل!
           body.className = "min-h-screen warning-pulse-red text-white flex flex-col font-sans select-none";
           icon.innerText = "🚨";
           title.innerText = "خطر: تجاوزت الحدود المحددة!";
-          
-          startInstantAlarm(); // يطلق التزمير الفوري الميداني
+          startInstantAlarm();
           if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
       }
