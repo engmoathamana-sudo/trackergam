@@ -3,281 +3,835 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>نظام التتبع الذكي والإنذار الميداني</title>
- 
+  <title>GIS Sentinel Pro - نظام التتبع والتحليل الميداني</title>
+  
+  <!-- خط Tajawal العربي -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
- 
+  
   <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- JSZip لقراءة ملفات KMZ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <!-- Leaflet Heatmap Plugin (الخريطة الحرارية) -->
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
   <style>
-    @keyframes pulse-bg-red {
-      0%, 100% { background-color: #dc2626; }
-      50% { background-color: #7f1d1d; }
+    * { font-family: 'Tajawal', sans-serif; }
+
+    @keyframes pulse-amber {
+      0%, 100% { border-color: #f59e0b; box-shadow: 0 0 20px rgba(245, 158, 11, 0.5); background-color: rgba(69, 26, 3, 0.9); }
+      50% { border-color: #b45309; box-shadow: 0 0 5px rgba(245, 158, 11, 0.15); background-color: rgba(28, 11, 2, 0.9); }
     }
-    @keyframes pulse-bg-amber {
-      0%, 100% { background-color: #d97706; }
-      50% { background-color: #78350f; }
+    @keyframes pulse-red {
+      0%, 100% { border-color: #ef4444; box-shadow: 0 0 25px rgba(239, 68, 68, 0.6); background-color: rgba(69, 10, 10, 0.95); }
+      50% { border-color: #991b1b; box-shadow: 0 0 5px rgba(239, 68, 68, 0.2); background-color: rgba(31, 4, 4, 0.95); }
     }
-    .warning-pulse-red { animation: pulse-bg-red 0.6s infinite; }
-    .warning-pulse-amber { animation: pulse-bg-amber 1s infinite; }
-    #map { height: 48vh; width: 100%; z-index: 10; touch-action: none; }
+    .status-pulse-amber { animation: pulse-amber 1.5s infinite; }
+    .status-pulse-red { animation: pulse-red 1.2s infinite; }
+
+    /* الشارة المتحركة المركزية للـ GPS */
+    .gps-marker-container {
+      position: relative;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .gps-marker-core {
+      width: 14px;
+      height: 14px;
+      background: #0284c7;
+      border: 2.5px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(2, 132, 199, 0.9);
+      z-index: 2;
+    }
+    .gps-marker-wave {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1.5px solid #38bdf8;
+      background: rgba(56, 189, 248, 0.2);
+      animation: gps-wave-pulse 1.8s infinite ease-out;
+      z-index: 1;
+    }
+    @keyframes gps-wave-pulse {
+      0% { transform: scale(0.3); opacity: 1; }
+      100% { transform: scale(1.7); opacity: 0; }
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #090d16; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+
+    @media print {
+      aside, .no-print { display: none !important; }
+      main { width: 100vw !important; height: 100vh !important; }
+      #printReportHeader { display: block !important; }
+    }
   </style>
 </head>
-<body id="mainBody" class="min-h-screen bg-slate-900 text-white flex flex-col transition-colors duration-300 font-sans select-none">
+<body id="mainBody" class="h-screen w-screen flex flex-col md:flex-row overflow-hidden bg-slate-950 text-slate-100 font-sans select-none">
 
-  <!-- 1. شريط البحث والتحكم العلوي -->
-  <header class="bg-slate-800 p-2.5 border-b border-slate-700">
-    <div class="flex gap-2 items-center">
-      <div class="relative flex-1">
-        <input type="text" id="searchInput" onkeypress="if(event.key === 'Enter') searchLocation()" placeholder="🔍 ابحث عن موقع، حي، أو شارع..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500 transition">
+  <!-- لوحة التحكم الجانبية -->
+  <aside class="w-full md:w-[420px] lg:w-[450px] h-[52%] md:h-full flex flex-col z-30 bg-slate-900/95 backdrop-blur-2xl border-t md:border-t-0 md:border-l border-slate-800/80 order-2 md:order-1 p-4 space-y-3 overflow-y-auto shadow-2xl">
+    
+    <!-- الهيدر -->
+    <div class="flex justify-between items-center border-b border-slate-800/80 pb-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-slate-950 font-black text-lg">
+          🌐
+        </div>
+        <div>
+          <h1 class="font-extrabold text-sm text-slate-100 tracking-wide">GIS Sentinel Pro</h1>
+          <p class="text-[10px] text-slate-400 font-medium">تتبع + خريطة حرارية + كشف التغطية</p>
+        </div>
       </div>
-      <button onclick="searchLocation()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
-        بحث
-      </button>
-    </div>
-    <div id="searchStatus" class="text-[10px] text-emerald-400 h-3 px-1 mt-0.5"></div>
-  </header>
-
-  <!-- 2. الخريطة الميدانية وأزرار التمركز -->
-  <div class="relative">
-    <div id="map" class="border-b-2 border-slate-700"></div>
-   
-    <!-- أدوات التمركز عائمة -->
-    <div class="absolute bottom-3 left-3 z-20 flex flex-col gap-2">
-      <button onclick="toggleAutoFollow()" id="followBtn" class="bg-slate-900/90 text-slate-400 p-2 rounded-full shadow-2xl border border-slate-600 text-[10px] font-bold">
-        📹 كاميرا ثابتة
-      </button>
-      <button onclick="locateUserNow()" class="bg-slate-900/90 text-amber-400 p-2.5 rounded-full shadow-2xl border border-slate-600 text-base">
-        🎯
-      </button>
-    </div>
-  </div>
-
-  <!-- 3. لوحة التتبع وأدوات حفظ الموقع -->
-  <main class="flex-1 p-3 flex flex-col justify-between space-y-2 overflow-y-auto">
-   
-    <!-- وحدة أدوات حفظ المواقع -->
-    <div class="bg-slate-800/95 p-2.5 rounded-2xl border border-slate-700 flex justify-between items-center gap-2">
-      <button onclick="saveCurrentLocation()" class="flex-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold py-2 rounded-xl text-xs transition flex items-center justify-center gap-1 shadow-md">
-        💾 حفظ الموقع الحالي
-      </button>
-      <button onclick="toggleSavedLocationsList()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold px-3 py-2 rounded-xl text-xs transition">
-        📍 المحفوظة (<span id="savedCount">0</span>)
+      <button onclick="testAudioSound()" class="text-[11px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition active:scale-95 shadow">
+        🔊 فحص الصوت
       </button>
     </div>
 
-    <!-- قائمة المواقع المحفوظة -->
-    <div id="savedLocationsPanel" class="hidden bg-slate-800 p-3 rounded-2xl border border-slate-600 max-h-36 overflow-y-auto space-y-1.5 text-xs">
-      <div class="font-bold text-amber-400 mb-1 border-b border-slate-700 pb-1">قائمة المواقع المحفوظة:</div>
-      <div id="savedListContainer" class="space-y-1"></div>
-    </div>
-
-    <!-- قسم تتبع رابط مشترك / إحداثيات -->
-    <div class="bg-slate-800/90 p-2 rounded-2xl border border-slate-700 flex gap-2">
-      <input type="text" id="linkInput" placeholder="إلصق رابط Google Maps أو إحداثيات..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-amber-300 focus:outline-none dir-ltr">
-      <button onclick="parseAndSetTarget()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition">تتبع</button>
-      <button onclick="clearTarget()" class="bg-slate-700 text-slate-300 font-bold px-2 py-1.5 rounded-xl text-xs">إلغاء</button>
-    </div>
-
-    <!-- أزرار التحكم بالحدود والتتبع -->
-    <div class="flex gap-2">
-      <button onclick="clearPolygon()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 rounded-xl text-xs font-bold border border-slate-700 transition">
-        🗑️ مسح الحدود
-      </button>
-      <button id="trackBtn" onclick="toggleTracking()" class="flex-2 bg-blue-600 hover:bg-blue-500 text-white py-2.5 px-4 rounded-xl text-xs font-bold shadow-lg transition">
-        📍 بدء التتبع الذكي والإنذار
-      </button>
-    </div>
-
-    <!-- المؤشر الرئيسي للحالة الميدانية -->
-    <div class="text-center py-1">
-      <div id="statusIcon" class="text-3xl inline-block">🛰️</div>
-      <span id="statusTitle" class="text-base font-extrabold mr-2">جاهز لبدء التتبع</span>
-    </div>
-
-    <!-- شريط القياسات والحساسات -->
-    <footer class="bg-slate-800/90 p-2.5 rounded-2xl border border-slate-700 space-y-1.5">
-      <div class="flex justify-between items-center text-xs">
-        <span class="text-slate-400">عن أقرب حد: <strong id="edgeDistance" class="text-emerald-400">--</strong></span>
-        <span class="text-slate-400">عن الهدف: <strong id="targetDistance" class="text-amber-400">غير محدد</strong></span>
+    <!-- شريط البحث -->
+    <div class="space-y-1">
+      <div class="relative flex items-center">
+        <input type="text" id="searchInput" onkeypress="if(event.key === 'Enter') searchLocation()" placeholder="ابحث عن منطقة، حوض، أو معلم..." class="w-full bg-slate-950/80 border border-slate-800 focus:border-emerald-500 rounded-2xl pr-3.5 pl-20 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none transition-all shadow-inner">
+        <button onclick="searchLocation()" class="absolute left-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs transition active:scale-95 shadow">
+          بحث
+        </button>
       </div>
-      <div class="flex justify-between items-center text-[10px] text-slate-400 font-mono border-t border-slate-700/50 pt-1.5">
-        <span>Lat: <strong id="latVal" class="text-slate-200">--</strong></span>
-        <span>Lng: <strong id="lngVal" class="text-slate-200">--</strong></span>
-        <span>دقة الـ GPS: <strong id="accVal" class="text-emerald-400">--</strong> م</span>
+      <div id="searchStatus" class="text-[10px] text-emerald-400 font-semibold px-2 h-3"></div>
+    </div>
+
+    <!-- حالة التتبع والإنذار -->
+    <div id="statusBanner" class="bg-slate-950/90 p-3.5 rounded-3xl border border-slate-800 text-center shadow-xl space-y-1 transition-all duration-300">
+      <div class="flex items-center justify-center gap-2">
+        <span id="statusIcon" class="text-xl">🛰️</span>
+        <span id="statusTitle" class="text-xs font-black text-slate-200">جاهز لبدء التتبع الجغرافي</span>
       </div>
-    </footer>
+      <div id="distanceMessage" class="text-xs font-bold text-slate-400 pt-1 border-t border-slate-800/80 mt-1">
+        حدد حدود المنطقة على الخريطة ثم اضغط بدء التتبع
+      </div>
+    </div>
+
+    <!-- لوحة تحليل التغطية الجغرافية -->
+    <div class="bg-slate-950/70 p-3 rounded-3xl border border-slate-800 space-y-2">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <span class="text-xs font-black text-amber-400 flex items-center gap-1.5">📊 تحليل التغطية الميدانية</span>
+        <button id="coverageToggleBtn" onclick="toggleCoverageAnalysis()" class="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-xl text-[11px] font-extrabold transition active:scale-95">
+          فحص التغطية الآن
+        </button>
+      </div>
+
+      <div id="coverageBox" class="hidden space-y-2">
+        <div class="flex justify-between items-center bg-slate-900 p-2 rounded-2xl border border-slate-800">
+          <span class="text-[11px] text-slate-300 font-bold">نسبة المساحة المغطاة:</span>
+          <span id="coveragePercent" class="text-sm font-black text-emerald-400">0%</span>
+        </div>
+        <div class="text-[10px] text-slate-400 leading-relaxed bg-slate-900/50 p-2 rounded-xl">
+          🔴 <strong class="text-rose-400">النقاط الحمراء:</strong> تمثل الأجزاء والمناطق غير المغطاة. اضغط الزر أعلاه لإخفائها ومتابعة عملك.
+        </div>
+      </div>
+
+      <button onclick="printCoverageReport()" class="w-full bg-slate-900 hover:bg-slate-800 text-indigo-300 font-bold py-2 rounded-2xl text-xs border border-indigo-500/30 transition flex items-center justify-center gap-2">
+        🖨️ طباعة تقرير الخريطة والتغطية
+      </button>
+    </div>
+
+    <!-- إدارة الملفات والخرائط والخيارات الجانبية -->
+    <div class="bg-slate-950/50 p-3 rounded-3xl border border-slate-800/80 space-y-2">
+      
+      <button id="sideHeatBtn" onclick="toggleHeatmap()" class="w-full bg-slate-900 hover:bg-slate-800 text-amber-300 font-bold py-2 px-3 rounded-2xl text-xs border border-amber-500/30 transition flex items-center justify-center gap-2">
+        🔥 <span id="sideHeatBtnText">تشغيل الخريطة الحرارية</span>
+      </button>
+
+      <div class="grid grid-cols-2 gap-2">
+        <input type="file" id="kmlFileInput" accept=".kml,.kmz" onchange="handleFileUpload(event)" class="hidden">
+        <button onclick="document.getElementById('kmlFileInput').click()" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-bold py-2 px-2 rounded-2xl text-xs transition flex items-center justify-center gap-1.5 active:scale-95">
+          📁 رفع KML / KMZ
+        </button>
+        <button onclick="saveFullMapData()" class="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-bold py-2 px-2 rounded-2xl text-xs transition flex items-center justify-center gap-1.5 active:scale-95">
+          💾 حفظ الخريطة والإنجاز
+        </button>
+      </div>
+
+      <button onclick="toggleSavedPanel()" class="w-full bg-slate-900 hover:bg-slate-800/80 text-slate-300 font-bold py-1.5 rounded-2xl text-xs border border-slate-800 transition flex items-center justify-center gap-2">
+        🗺️ الخرائط المحفوظة (<span id="savedCount" class="text-amber-400 font-extrabold">0</span>)
+      </button>
+
+      <div id="savedPanel" class="hidden bg-slate-950 p-2.5 rounded-2xl border border-slate-800 max-h-40 overflow-y-auto space-y-1.5 text-xs">
+        <div id="savedListContainer" class="space-y-1.5"></div>
+      </div>
+    </div>
+
+    <!-- رابط جوجل ماب -->
+    <div class="bg-slate-950/50 p-2 rounded-3xl border border-slate-800/80 flex gap-1.5 items-center">
+      <input type="text" id="linkInput" placeholder="رابط Google Maps أو إحداثيات..." class="flex-1 bg-slate-900 border border-slate-800 rounded-2xl px-3 py-2 text-xs text-amber-300 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition dir-ltr">
+      <button onclick="parseAndSetTarget()" class="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-2 rounded-2xl text-xs transition active:scale-95">تتبع</button>
+      <button onclick="clearTarget()" class="bg-slate-800 text-slate-400 hover:text-slate-200 font-bold px-2 py-2 rounded-2xl text-xs transition">إلغاء</button>
+    </div>
+
+    <!-- أزرار التتبع الرئيسية -->
+    <div class="grid grid-cols-3 gap-2">
+      <button onclick="clearPolygon()" class="bg-slate-900 hover:bg-slate-800 text-slate-300 py-3 rounded-2xl text-xs font-bold border border-slate-800 transition active:scale-95">
+        🗑️ مسح
+      </button>
+      <button id="trackBtn" onclick="toggleTracking()" class="col-span-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black py-3 px-4 rounded-2xl text-xs shadow-lg shadow-emerald-500/20 transition active:scale-95 flex items-center justify-center gap-2">
+        📍 بدء التتبع والإنذار
+      </button>
+    </div>
+
+    <!-- العدادات -->
+    <div class="grid grid-cols-2 gap-2 text-xs">
+      <div class="bg-slate-950/60 p-2 rounded-2xl border border-slate-800/70">
+        <div class="text-[10px] text-slate-400">عن أحدث هدف:</div>
+        <div id="targetDistance" class="text-xs font-black text-amber-400 mt-0.5">غير محدد</div>
+      </div>
+      <div class="bg-slate-950/60 p-2 rounded-2xl border border-slate-800/70">
+        <div class="text-[10px] text-slate-400">دقة الـ GPS الحالية:</div>
+        <div class="text-xs font-black text-emerald-400 mt-0.5"><span id="accVal">--</span> متر</div>
+      </div>
+    </div>
+
+    <!-- الإحداثيات الحية -->
+    <div class="flex justify-between items-center text-[10px] text-slate-400 font-mono bg-slate-950/40 px-3 py-1.5 rounded-2xl border border-slate-800/40">
+      <span>Lat: <strong id="latVal" class="text-slate-200">--</strong></span>
+      <span>Lng: <strong id="lngVal" class="text-slate-200">--</strong></span>
+    </div>
+  </aside>
+
+  <!-- منطقة الخريطة والأزرار العائمة -->
+  <main class="flex-1 relative h-[48%] md:h-full order-1 md:order-2">
+    
+    <div id="printReportHeader" class="hidden p-4 bg-white text-black text-center border-b-2 border-black">
+      <h2 class="text-xl font-bold">تقرير التغطية الميدانية والتحركات الجغرافية</h2>
+      <p class="text-sm">GIS Sentinel Pro - Greater Amman Municipality</p>
+    </div>
+
+    <div id="map" class="w-full h-full z-10"></div>
+
+    <!-- الأزرار العائمة فوق الخريطة -->
+    <div class="absolute top-4 left-4 z-[1000] flex flex-col gap-2 no-print">
+      
+      <!-- زر طبقة الخريطة -->
+      <button onclick="toggleMapLayer()" class="bg-slate-900/90 backdrop-blur-md text-slate-100 hover:bg-slate-800 p-2.5 rounded-2xl shadow-2xl border border-slate-700/80 text-xs font-bold flex items-center gap-2 transition active:scale-95">
+        🗺️ <span id="layerBtnText">الشوارع</span>
+      </button>
+
+      <!-- زر الكاميرا الثابتة -->
+      <button id="followBtn" onclick="toggleAutoFollow()" class="bg-slate-900/90 backdrop-blur-md text-slate-400 hover:text-slate-200 p-2.5 rounded-2xl shadow-2xl border border-slate-700/80 text-xs font-bold transition active:scale-95 flex items-center gap-2">
+        📹 <span id="followBtnText">الكاميرا الثابتة</span>
+      </button>
+
+      <!-- زر الخريطة الحرارية العائم -->
+      <button id="heatBtn" onclick="toggleHeatmap()" class="bg-slate-900/90 backdrop-blur-md text-slate-400 hover:text-amber-300 p-2.5 rounded-2xl shadow-2xl border border-slate-700/80 text-xs font-bold transition active:scale-95 flex items-center gap-2">
+        🔥 <span id="heatBtnText">خريطة حرارية</span>
+      </button>
+
+      <!-- زر تحديد موقعي -->
+      <button onclick="locateUserNow(true)" class="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black p-2.5 rounded-2xl shadow-2xl border border-amber-300 text-xs transition active:scale-95 flex items-center justify-center gap-1.5">
+        🎯 <span>تحديد موقعي</span>
+      </button>
+    </div>
   </main>
 
   <script>
+    // 1. تهيئة الخريطة والطبقات
     const map = L.map('map', {
       zoomControl: false, tap: false, touchZoom: true, dragging: true
     }).setView([31.9882, 35.8654], 15);
 
-    L.control.zoom({ position: 'topleft' }).addTo(map);
+    L.control.zoom({ position: 'topright' }).addTo(map);
 
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19, attribution: 'Esri Satellite'
-    }).addTo(map);
+    });
 
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: 'OpenStreetMap'
+    });
+
+    const labelOverlay = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19
-    }).addTo(map);
+    });
 
+    satelliteLayer.addTo(map);
+    labelOverlay.addTo(map);
+
+    let currentLayerType = 'sat';
+
+    function toggleMapLayer() {
+      if (currentLayerType === 'sat') {
+        map.removeLayer(satelliteLayer);
+        map.removeLayer(labelOverlay);
+        streetLayer.addTo(map);
+        currentLayerType = 'street';
+        document.getElementById('layerBtnText').innerText = "فضائي";
+      } else {
+        map.removeLayer(streetLayer);
+        satelliteLayer.addTo(map);
+        labelOverlay.addTo(map);
+        currentLayerType = 'sat';
+        document.getElementById('layerBtnText').innerText = "الشوارع";
+      }
+    }
+
+    // تصميم الشارة المتحركة بالـ HTML و CSS
+    const userGpsIcon = L.divIcon({
+      className: '',
+      html: `
+        <div class="gps-marker-container">
+          <div class="gps-marker-wave"></div>
+          <div class="gps-marker-core"></div>
+        </div>
+      `,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+
+    // المتغيرات العامة
     let drawnPoints = [];
+    let pathHistory = []; 
+    let currentCoveragePercent = 0;
     let polygonLayer = null;
     let userMarker = null;
     let accuracyCircle = null;
     let targetMarker = null;
     let targetLatLng = null;
+    let heatLayer = null;
+    let uncoveredLayerGroup = null;
     let watchId = null;
     let isTracking = false;
     let autoFollow = false;
-    let audioCtx = null;
+    let showHeatmap = false;
+    let isCoverageActive = false;
     let alarmInterval = null;
     let currentLat = null;
     let currentLng = null;
 
-    function fixMapSize() { setTimeout(() => { map.invalidateSize(); }, 300); }
-    window.addEventListener('load', () => { fixMapSize(); updateSavedLocationsUI(); });
-    window.addEventListener('resize', fixMapSize);
+    // 2. إدارة الصوت
+    let audioCtx = null;
 
-    // تفعيل نظام الصوت باللمس لتجاوز قيود متصفحات الهواتف
-    function initAudioOnMobile() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
-    }
-
-    function startInstantAlarm() {
-      if (!alarmInterval) {
-        triggerAudioBeep(950);
-        alarmInterval = setInterval(() => { triggerAudioBeep(950); }, 250);
-      }
-    }
-
-    function stopInstantAlarm() {
-      if (alarmInterval) {
-        clearInterval(alarmInterval);
-        alarmInterval = null;
-      }
-    }
-
-    function triggerAudioBeep(freq = 880) {
+    function forceUnlockAudio() {
       try {
-        initAudioOnMobile();
-        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.15);
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const buffer = audioCtx.createBuffer(1, 1, 22050);
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioCtx.destination);
+        source.start(0);
       } catch(e) {}
     }
 
-    function saveCurrentLocation() {
-      if (!currentLat || !currentLng) {
-        alert("تنبيه: لم يتم تحديد موقعك عبر الـ GPS حتى الآن. يرجى تفعيل الموقع والانتقال لمكان مكشوف.");
+    ['click', 'touchstart', 'touchend', 'keydown'].forEach(evt => {
+      window.addEventListener(evt, () => { forceUnlockAudio(); }, { once: false });
+    });
+
+    function playSoftWarningSound() {
+      try {
+        forceUnlockAudio();
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'triangle'; 
+        osc1.frequency.setValueAtTime(660, now);
+        gain1.gain.setValueAtTime(0.5, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.25);
+      } catch(e) {}
+    }
+
+    function playSoftBreachSound() {
+      try {
+        forceUnlockAudio();
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.setValueAtTime(1200, now + 0.1);
+        gain.gain.setValueAtTime(0.6, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.35);
+      } catch(e) {}
+    }
+
+    function testAudioSound() {
+      forceUnlockAudio();
+      playSoftWarningSound();
+      setTimeout(() => { playSoftBreachSound(); }, 400);
+      alert("🔔 تم تفعيل واختبار الصوت بنجاح!");
+    }
+
+    function startBreachAlarmLoop() {
+      if (!alarmInterval) {
+        playSoftBreachSound();
+        alarmInterval = setInterval(() => { playSoftBreachSound(); }, 750);
+      }
+    }
+
+    function stopAlarmLoop() {
+      if (alarmInterval) { clearInterval(alarmInterval); alarmInterval = null; }
+    }
+
+    // 3. تحديد موقع المستخدم فوراً وتحديث الشارة المتحركة
+    function locateUserNow(flyToLocation = true) {
+      forceUnlockAudio();
+      if ("geolocation" in navigator) {
+        document.getElementById('statusTitle').innerText = "⏳ جاري تحديد موقعك...";
+
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            onPositionUpdate(position);
+            if (flyToLocation) {
+              map.flyTo([position.coords.latitude, position.coords.longitude], 18, { animate: true });
+            }
+          },
+          (err) => {
+            onPositionError(err);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      } else {
+        alert("متصفحك لا يدعم تحديد الموقع الجغرافي.");
+      }
+    }
+
+    // 4. التحكم بالتتبع المباشر من خلال watchPosition
+    function toggleTracking() {
+      forceUnlockAudio();
+      const trackBtn = document.getElementById('trackBtn');
+
+      if (!isTracking) {
+        if ("geolocation" in navigator) {
+          isTracking = true;
+          trackBtn.innerHTML = "⏹️ إيقاف التتبع والإنذار";
+          trackBtn.className = "col-span-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-black py-3 px-4 rounded-2xl text-xs shadow-lg shadow-rose-600/30 transition active:scale-95 flex items-center justify-center gap-2 animate-pulse";
+
+          document.getElementById('statusTitle').innerText = "📡 جاري استقبال إشارة الـ GPS...";
+
+          locateUserNow(true);
+
+          watchId = navigator.geolocation.watchPosition(onPositionUpdate, onPositionError, {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 15000
+          });
+        } else {
+          alert("متصفحك لا يدعم تحديد المواقع الجغرافية GPS.");
+        }
+      } else {
+        stopTracking();
+      }
+    }
+
+    function stopTracking() {
+      isTracking = false;
+      stopAlarmLoop();
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      const trackBtn = document.getElementById('trackBtn');
+      trackBtn.innerHTML = "📍 بدء التتبع والإنذار";
+      trackBtn.className = "col-span-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black py-3 px-4 rounded-2xl text-xs shadow-lg shadow-emerald-500/20 transition active:scale-95 flex items-center justify-center gap-2";
+      resetUI();
+    }
+
+    function onPositionUpdate(pos) {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const accuracy = Math.round(pos.coords.accuracy);
+
+      currentLat = lat;
+      currentLng = lng;
+
+      // تسجيل مسار التحرك
+      pathHistory.push([lat, lng]);
+
+      // تحديث الخريطة الحرارية إذا كانت مفعلة
+      if (heatLayer && showHeatmap) {
+        heatLayer.addLatLng([lat, lng]);
+      }
+
+      // تحديث أو إنشاء شارة المستخدم المتحركة
+      if (!userMarker) {
+        userMarker = L.marker([lat, lng], { icon: userGpsIcon, zIndexOffset: 1000 }).addTo(map);
+      } else {
+        userMarker.setLatLng([lat, lng]);
+      }
+
+      // تحديث دائرة دقة الـ GPS (مع تحديد حد أقصى 35 متر لمنع ظهور دوائر عملاقة تغطي الخريطة)
+      const displayRadius = Math.min(accuracy, 35);
+      if (!accuracyCircle) {
+        accuracyCircle = L.circle([lat, lng], {
+          radius: displayRadius,
+          color: '#0284c7',
+          fillColor: '#38bdf8',
+          fillOpacity: 0.1,
+          weight: 1.5,
+          dashArray: '3, 3'
+        }).addTo(map);
+      } else {
+        accuracyCircle.setLatLng([lat, lng]);
+        accuracyCircle.setRadius(displayRadius);
+      }
+
+      if (autoFollow) {
+        map.setView([lat, lng], map.getZoom(), { animate: true });
+      }
+
+      document.getElementById('latVal').innerText = lat.toFixed(6);
+      document.getElementById('lngVal').innerText = lng.toFixed(6);
+      document.getElementById('accVal').innerText = accuracy;
+
+      if (targetLatLng) {
+        const distToTarget = Math.round(getDistanceMeters(lat, lng, targetLatLng.lat, targetLatLng.lng));
+        document.getElementById('targetDistance').innerText = `${distToTarget} متر`;
+      }
+
+      evaluateGeofence(lat, lng);
+    }
+
+    function onPositionError(err) {
+      let msgText = "جاري الاتصال بالـ GPS...";
+      if (err.code === 1) {
+        msgText = "⚠️ إذن الـ GPS غير مسموح بالمتصفح";
+      } else if (err.code === 2) {
+        msgText = "⚠️ متعذر الحصول على إشارة GPS";
+      } else if (err.code === 3) {
+        msgText = "⚠️ انتهت مهلة طلب موقع الـ GPS";
+      }
+      document.getElementById('statusTitle').innerText = msgText;
+    }
+
+    // 5. التحكم بالكاميرا الثابتة
+    function toggleAutoFollow() {
+      autoFollow = !autoFollow;
+      const btn = document.getElementById('followBtn');
+      const text = document.getElementById('followBtnText');
+
+      if (autoFollow) {
+        btn.className = "bg-emerald-600 text-white p-2.5 rounded-2xl border border-emerald-400 font-bold active:scale-95 transition flex items-center gap-2 shadow-2xl animate-pulse";
+        text.innerText = "الكاميرا الثابتة: مفعلة";
+        if (currentLat && currentLng) {
+          map.setView([currentLat, currentLng], map.getZoom(), { animate: true });
+        } else {
+          locateUserNow(true);
+        }
+      } else {
+        btn.className = "bg-slate-900/90 backdrop-blur-md text-slate-400 p-2.5 rounded-2xl border border-slate-700/80 font-bold active:scale-95 transition flex items-center gap-2 shadow-2xl";
+        text.innerText = "الكاميرا الثابتة";
+      }
+    }
+
+    // 6. الخريطة الحرارية الموحدة
+    function toggleHeatmap() {
+      showHeatmap = !showHeatmap;
+      updateHeatmapUI();
+    }
+
+    function updateHeatmapUI() {
+      const floatBtn = document.getElementById('heatBtn');
+      const floatText = document.getElementById('heatBtnText');
+      const sideBtnText = document.getElementById('sideHeatBtnText');
+
+      if (showHeatmap) {
+        if (pathHistory.length === 0) {
+          alert("لا توجد بيانات مسار حركي بعد. قم بتفعيل (بدء التتبع) والتنقل لجمع نقاط الخريطة الحرارية.");
+          showHeatmap = false;
+          return;
+        }
+
+        if (!heatLayer) {
+          heatLayer = L.heatLayer(pathHistory, { radius: 25, blur: 15, maxZoom: 18 });
+        } else {
+          heatLayer.setLatLngs(pathHistory);
+        }
+        heatLayer.addTo(map);
+
+        floatBtn.className = "bg-amber-600 text-white p-2.5 rounded-2xl border border-amber-400 font-bold active:scale-95 transition flex items-center gap-2 shadow-2xl";
+        floatText.innerText = "الخريطة الحرارية: مفعلة";
+        if (sideBtnText) sideBtnText.innerText = "إيقاف الخريطة الحرارية";
+      } else {
+        if (heatLayer) map.removeLayer(heatLayer);
+        floatBtn.className = "bg-slate-900/90 backdrop-blur-md text-slate-400 p-2.5 rounded-2xl border border-slate-700/80 font-bold active:scale-95 transition flex items-center gap-2 shadow-2xl";
+        floatText.innerText = "خريطة حرارية";
+        if (sideBtnText) sideBtnText.innerText = "تشغيل الخريطة الحرارية";
+      }
+    }
+
+    // 7. تحليل التغطية الميدانية
+    function getDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+    }
+
+    function toggleCoverageAnalysis() {
+      const toggleBtn = document.getElementById('coverageToggleBtn');
+      const coverageBox = document.getElementById('coverageBox');
+
+      if (isCoverageActive) {
+        if (uncoveredLayerGroup) uncoveredLayerGroup.clearLayers();
+        coverageBox.classList.add('hidden');
+        toggleBtn.innerText = "فحص التغطية الآن";
+        toggleBtn.className = "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-2.5 py-1 rounded-xl text-[11px] font-extrabold transition active:scale-95";
+        isCoverageActive = false;
         return;
       }
-      const defaultName = `موقع (${new Date().toLocaleTimeString('ar-JO', {hour: '2-digit', minute:'2-digit'})})`;
-      const name = prompt("أدخل اسماً مخصصاً لهذا الموقع:", defaultName);
+
+      if (drawnPoints.length < 3) {
+        alert("يرجى تحديد حدود المنطقة أولاً للقيام بتحليل التغطية.");
+        return;
+      }
+      if (pathHistory.length === 0) {
+        alert("لم يتم تسجيل تحركات بعد. شغل زر (بدء التتبع) وتحرك داخل المنطقة لجمع البيانات.");
+        return;
+      }
+
+      if (uncoveredLayerGroup) uncoveredLayerGroup.clearLayers();
+      else uncoveredLayerGroup = L.layerGroup().addTo(map);
+
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      drawnPoints.forEach(pt => {
+        if (pt[0] < minLat) minLat = pt[0];
+        if (pt[0] > maxLat) maxLat = pt[0];
+        if (pt[1] < minLng) minLng = pt[1];
+        if (pt[1] > maxLng) maxLng = pt[1];
+      });
+
+      const latStep = 0.00015;
+      const lngStep = 0.00018;
+
+      let totalGrid = 0;
+      let coveredGrid = 0;
+      const coverageRadius = 18; 
+
+      for (let lat = minLat; lat <= maxLat; lat += latStep) {
+        for (let lng = minLng; lng <= maxLng; lng += lngStep) {
+          if (isInsideBoundary([lat, lng], drawnPoints)) {
+            totalGrid++;
+            let isCovered = false;
+            for (let i = 0; i < pathHistory.length; i++) {
+              if (getDistanceMeters(lat, lng, pathHistory[i][0], pathHistory[i][1]) <= coverageRadius) {
+                isCovered = true;
+                break;
+              }
+            }
+            if (isCovered) {
+              coveredGrid++;
+            } else {
+              L.circle([lat, lng], {
+                radius: 6,
+                color: '#ef4444',
+                fillColor: '#ef4444',
+                fillOpacity: 0.65,
+                weight: 1
+              }).addTo(uncoveredLayerGroup);
+            }
+          }
+        }
+      }
+
+      currentCoveragePercent = totalGrid > 0 ? Math.min(100, Math.round((coveredGrid / totalGrid) * 100)) : 0;
+      
+      document.getElementById('coveragePercent').innerText = currentCoveragePercent + "%";
+      coverageBox.classList.remove('hidden');
+
+      toggleBtn.innerText = "إخفاء الفحص 👁️";
+      toggleBtn.className = "bg-rose-600/30 hover:bg-rose-600/40 text-rose-300 border border-rose-500/50 px-2.5 py-1 rounded-xl text-[11px] font-extrabold transition active:scale-95";
+      isCoverageActive = true;
+    }
+
+    function printCoverageReport() {
+      window.print();
+    }
+
+    // 8. قراءة KML وحفظ الخريطة والإنجاز
+    function fixMapSize() { setTimeout(() => { map.invalidateSize(); }, 300); }
+    window.addEventListener('load', () => { fixMapSize(); updateSavedUI(); });
+    window.addEventListener('resize', fixMapSize);
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const fileName = file.name.toLowerCase();
+
+      if (fileName.endsWith('.kmz')) {
+        try {
+          const zip = await JSZip.loadAsync(file);
+          let kmlFile = null;
+          zip.forEach((relativePath, fileEntry) => {
+            if (relativePath.toLowerCase().endsWith('.kml') && !kmlFile) kmlFile = fileEntry;
+          });
+          if (!kmlFile) return alert("لم يتم العثور على ملف KML داخل KMZ.");
+          const kmlText = await kmlFile.async("string");
+          parseKMLText(kmlText);
+        } catch (err) {
+          alert("خطأ أثناء قراءة KMZ: " + err.message);
+        }
+      } else if (fileName.endsWith('.kml')) {
+        const reader = new FileReader();
+        reader.onload = function(e) { parseKMLText(e.target.result); };
+        reader.readAsText(file);
+      }
+    }
+
+    function parseKMLText(kmlText) {
+      try {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(kmlText, "text/xml");
+        const coordNodes = xmlDoc.getElementsByTagName("coordinates");
+
+        let newPoints = [];
+        for (let i = 0; i < coordNodes.length; i++) {
+          const coordPairs = coordNodes[i].textContent.trim().split(/\s+/);
+          coordPairs.forEach(pair => {
+            const parts = pair.split(',');
+            if (parts.length >= 2) {
+              const lng = parseFloat(parts[0]), lat = parseFloat(parts[1]);
+              if (!isNaN(lat) && !isNaN(lng)) newPoints.push([lat, lng]);
+            }
+          });
+        }
+
+        if (newPoints.length > 0) {
+          drawnPoints = newPoints;
+          drawPolygonOnMap();
+          if (polygonLayer) map.fitBounds(polygonLayer.getBounds());
+          alert(`تم استيراد الخريطة بنجاح! (${newPoints.length} نقطة) 🗺️`);
+        }
+      } catch (err) {
+        alert("خطأ في تحليل KML: " + err.message);
+      }
+    }
+
+    function saveFullMapData() {
+      if (drawnPoints.length < 3 && pathHistory.length === 0) {
+        return alert("يرجى رسم حدود أو تنفيذ جولة تتبع أولاً قبل الحفظ.");
+      }
+
+      const name = prompt("أدخل اسماً لحفظ هذه الخريطة ونسبة الإنجاز:", `خريطة (${new Date().toLocaleDateString('ar-JO')})`);
       if (!name) return;
 
-      let saved = JSON.parse(localStorage.getItem('userSavedLocations') || '[]');
-      saved.push({ id: Date.now(), name: name, lat: currentLat, lng: currentLng });
-      localStorage.setItem('userSavedLocations', JSON.stringify(saved));
-     
-      updateSavedLocationsUI();
-      alert("تم حفظ الموقع بنجاح! 💾");
+      const record = {
+        id: Date.now(),
+        name: name,
+        points: drawnPoints,
+        pathHistory: pathHistory,
+        coveragePercent: currentCoveragePercent,
+        savedUserLocation: (currentLat && currentLng) ? { lat: currentLat, lng: currentLng } : null,
+        date: new Date().toLocaleDateString('ar-JO')
+      };
+
+      let saved = JSON.parse(localStorage.getItem('userFullSavedMapRecords') || '[]');
+      saved.push(record);
+      localStorage.setItem('userFullSavedMapRecords', JSON.stringify(saved));
+      updateSavedUI();
+      alert(`تم حفظ العمل بنجاح! 💾\nنسبة الإنجاز المحفوظة: ${currentCoveragePercent}%`);
     }
 
-    function toggleSavedLocationsList() {
-      document.getElementById('savedLocationsPanel').classList.toggle('hidden');
-    }
+    function toggleSavedPanel() { document.getElementById('savedPanel').classList.toggle('hidden'); }
 
-    function updateSavedLocationsUI() {
-      let saved = JSON.parse(localStorage.getItem('userSavedLocations') || '[]');
+    function updateSavedUI() {
+      let saved = JSON.parse(localStorage.getItem('userFullSavedMapRecords') || '[]');
       document.getElementById('savedCount').innerText = saved.length;
       const container = document.getElementById('savedListContainer');
-     
+
       if (saved.length === 0) {
-        container.innerHTML = '<div class="text-slate-500 text-[11px]">لا توجد مواقع محفوظة حالياً.</div>';
+        container.innerHTML = '<div class="text-slate-500 text-[11px] text-center py-2">لا توجد خرائط محفوظة.</div>';
         return;
       }
 
-      container.innerHTML = saved.map((item) => `
-        <div class="flex justify-between items-center bg-slate-900 p-2 rounded-lg border border-slate-700">
-          <span class="font-bold text-slate-200 text-xs">${item.name}</span>
+      container.innerHTML = saved.map(item => `
+        <div class="flex justify-between items-center bg-slate-900 p-2 rounded-xl border border-slate-800">
+          <div>
+            <div class="font-bold text-slate-200 text-xs">${item.name}</div>
+            <div class="text-[10px] text-emerald-400 font-extrabold">نسبة الإنجاز: ${item.coveragePercent || 0}%</div>
+            <div class="text-[9px] text-slate-500">نقاط الحدود: ${item.points ? item.points.length : 0}</div>
+          </div>
           <div class="flex gap-1">
-            <button onclick="jumpToSavedLocation(${item.lat}, ${item.lng})" class="bg-amber-600 hover:bg-amber-500 text-white px-2 py-0.5 rounded text-[10px]">انتقال 🎯</button>
-            <button onclick="deleteSavedLocation(${item.id})" class="bg-red-700 hover:bg-red-600 text-white px-2 py-0.5 rounded text-[10px]">حذف 🗑️</button>
+            <button onclick="restoreSavedRecord(${item.id})" class="bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded-lg text-[10px] font-bold">عرض 🗺️</button>
+            <button onclick="deleteSavedRecord(${item.id})" class="bg-rose-700 hover:bg-rose-600 text-white px-2 py-1 rounded-lg text-[10px]">حذف 🗑️</button>
           </div>
         </div>
       `).join('');
     }
 
-    function jumpToSavedLocation(lat, lng) {
-      map.flyTo([lat, lng], 17);
-      L.popup().setLatLng([lat, lng]).setContent(`<b>📍 موقع محفوظ</b>`).openOn(map);
+    function restoreSavedRecord(id) {
+      let saved = JSON.parse(localStorage.getItem('userFullSavedMapRecords') || '[]');
+      const item = saved.find(r => r.id === id);
+      if (!item) return;
+
+      if (item.points && item.points.length > 0) {
+        drawnPoints = item.points;
+        drawPolygonOnMap();
+      }
+
+      if (item.pathHistory && item.pathHistory.length > 0) {
+        pathHistory = item.pathHistory;
+        if (heatLayer && showHeatmap) heatLayer.setLatLngs(pathHistory);
+      }
+
+      if (item.coveragePercent !== undefined) {
+        currentCoveragePercent = item.coveragePercent;
+        document.getElementById('coveragePercent').innerText = currentCoveragePercent + "%";
+        document.getElementById('coverageBox').classList.remove('hidden');
+      }
+
+      if (polygonLayer) map.fitBounds(polygonLayer.getBounds().pad(0.1));
+      alert(`تم استرجاع الخريطة بنجاح! نسبة الإنجاز المحفوظة: ${currentCoveragePercent}%`);
     }
 
-    function deleteSavedLocation(id) {
-      let saved = JSON.parse(localStorage.getItem('userSavedLocations') || '[]');
-      saved = saved.filter(item => item.id !== id);
-      localStorage.setItem('userSavedLocations', JSON.stringify(saved));
-      updateSavedLocationsUI();
+    function deleteSavedRecord(id) {
+      let saved = JSON.parse(localStorage.getItem('userFullSavedMapRecords') || '[]');
+      saved = saved.filter(r => r.id !== id);
+      localStorage.setItem('userFullSavedMapRecords', JSON.stringify(saved));
+      updateSavedUI();
     }
 
+    // 9. البحث والرسومات التفاعلية
     async function searchLocation() {
       const query = document.getElementById('searchInput').value.trim();
       const status = document.getElementById('searchStatus');
       if (!query) return;
 
-      status.innerText = "⏳ جاري البحث عن الموقع...";
+      status.innerText = "⏳ جاري البحث...";
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`);
         const data = await res.json();
         if (data && data.length > 0) {
-          const lat = parseFloat(data[0].lat);
-          const lon = parseFloat(data[0].lon);
-          map.flyTo([lat, lon], 17, { animate: true, duration: 1 });
+          const lat = parseFloat(data[0].lat), lon = parseFloat(data[0].lon);
+          map.flyTo([lat, lon], 17, { animate: true });
           L.popup().setLatLng([lat, lon]).setContent(`<b>📍 ${data[0].display_name}</b>`).openOn(map);
           status.innerText = "✓ تم العثور على الموقع";
           setTimeout(() => { status.innerText = ""; }, 3000);
-        } else {
-          alert("لم يتم العثور على الموقع المطلوب.");
-          status.innerText = "";
         }
-      } catch (e) {
-        alert("حدث خطأ أثناء البحث.");
-        status.innerText = "";
-      }
-    }
-
-    function toggleAutoFollow() {
-      autoFollow = !autoFollow;
-      const btn = document.getElementById('followBtn');
-      btn.className = autoFollow ? "bg-slate-900/90 text-emerald-400 p-2 rounded-full border border-emerald-500 font-bold" : "bg-slate-900/90 text-slate-400 p-2 rounded-full border border-slate-600 font-bold";
-    }
-
-    function locateUserNow() {
-      initAudioOnMobile();
-      if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition((position) => {
-          map.flyTo([position.coords.latitude, position.coords.longitude], 18);
-        }, (err) => {
-          alert("تعذر تحديد موقعك. يرجى التاكد من تفعيل خدمة الـ GPS على الهاتف والسماح للمتصفح الوصول للموقع.");
-        }, { enableHighAccuracy: true });
-      }
+      } catch (e) { status.innerText = ""; }
     }
 
     function parseAndSetTarget() {
@@ -300,25 +854,38 @@
       document.getElementById('targetDistance').innerText = "غير محدد";
     }
 
+    // السماح بالرسم بالنقر على الخريطة في أي وقت دون حظر
     map.on('click', function(e) {
-      if (!isTracking) {
-        drawnPoints.push([e.latlng.lat, e.latlng.lng]);
-        drawPolygonOnMap();
-      }
+      drawnPoints.push([e.latlng.lat, e.latlng.lng]);
+      drawPolygonOnMap();
     });
 
     function drawPolygonOnMap() {
       if (polygonLayer) map.removeLayer(polygonLayer);
       if (drawnPoints.length > 0) {
-        polygonLayer = L.polygon(drawnPoints, { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.25, weight: 3 }).addTo(map);
+        polygonLayer = L.polygon(drawnPoints, { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.28, weight: 3.5 }).addTo(map);
+      }
+      // إعادة تقييم الحدود فوراً إذا كان الموقع محدداً
+      if (currentLat && currentLng) {
+        evaluateGeofence(currentLat, currentLng);
       }
     }
 
     function clearPolygon() {
-      if (isTracking) toggleTracking();
       drawnPoints = [];
-      if (polygonLayer) map.removeLayer(polygonLayer);
-      resetUI();
+      if (polygonLayer) {
+        map.removeLayer(polygonLayer);
+        polygonLayer = null;
+      }
+      if (uncoveredLayerGroup) uncoveredLayerGroup.clearLayers();
+      document.getElementById('coverageBox').classList.add('hidden');
+      currentCoveragePercent = 0;
+
+      if (currentLat && currentLng) {
+        evaluateGeofence(currentLat, currentLng);
+      } else {
+        resetUI();
+      }
     }
 
     function isInsideBoundary(point, vs) {
@@ -350,105 +917,63 @@
       return minDistance;
     }
 
-    function toggleTracking() {
-      initAudioOnMobile(); // إيقاظ الصوت فور الضغط
-      const btn = document.getElementById('trackBtn');
-      if (!isTracking) {
-        if (drawnPoints.length < 3 && !targetLatLng) {
-          alert("يرجى تحديد حدود على الخريطة أولاً بالنقر على 3 نقاط على الأقل.");
-          return;
-        }
-        isTracking = true;
-        btn.innerHTML = "⏹️ إيقاف التتبع";
-        btn.classList.replace('bg-blue-600', 'bg-slate-700');
-        if ("geolocation" in navigator) {
-          watchId = navigator.geolocation.watchPosition(updatePosition, handleGpsError, {
-            enableHighAccuracy: true, maximumAge: 0, timeout: 10000
-          });
-        }
-      } else {
-        isTracking = false;
-        btn.innerHTML = "📍 بدء التتبع الذكي والإنذار";
-        btn.classList.replace('bg-slate-700', 'bg-blue-600');
-        if (watchId) navigator.geolocation.clearWatch(watchId);
-        stopInstantAlarm();
-        resetUI();
-      }
-    }
+    function evaluateGeofence(lat, lng) {
+      const banner = document.getElementById('statusBanner');
+      const icon = document.getElementById('statusIcon');
+      const title = document.getElementById('statusTitle');
+      const msg = document.getElementById('distanceMessage');
 
-    function handleGpsError(err) {
-      alert("⚠️ تعذر تحديد موقع الـ GPS! يرجى التأكد من تفعيل زر (الموقع/Location) على هاتفك وإعطاء المتصفح الإذن بالوصول للموقع.");
-    }
-
-    function updatePosition(position) {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      const acc = position.coords.accuracy;
-      currentLat = lat; currentLng = lng;
-
-      document.getElementById('latVal').innerText = lat.toFixed(5);
-      document.getElementById('lngVal').innerText = lng.toFixed(5);
-      document.getElementById('accVal').innerText = Math.round(acc);
-
-      if (targetLatLng) {
-        const dist = L.latLng(lat, lng).distanceTo(targetLatLng);
-        document.getElementById('targetDistance').innerText = dist > 1000 ? (dist/1000).toFixed(2) + " كم" : Math.round(dist) + " متر";
+      if (drawnPoints.length < 3) {
+        stopAlarmLoop();
+        banner.className = "bg-slate-950/90 p-3.5 rounded-3xl border border-slate-800 text-center shadow-xl space-y-1";
+        icon.innerText = "🛰️";
+        title.innerText = isTracking ? "التتبع نشط (موقعك محدد)" : "موقعك محدد على الخريطة";
+        msg.innerText = "ارسم 3 نقاط على الأقل لتفعيل التنبيه الميداني";
+        return;
       }
 
-      if (autoFollow) map.panTo([lat, lng], { animate: true });
+      const inside = isInsideBoundary([lat, lng], drawnPoints);
+      const edgeDistance = getMinDistanceToPolygonEdge(lat, lng, drawnPoints);
 
-      if (!userMarker) {
-        userMarker = L.circleMarker([lat, lng], { radius: 7, color: '#fff', weight: 2, fillColor: '#2563eb', fillOpacity: 1 }).addTo(map);
-        accuracyCircle = L.circle([lat, lng], { radius: acc, color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: 0.15, weight: 1 }).addTo(map);
-        map.setView([lat, lng], 17);
-      } else {
-        userMarker.setLatLng([lat, lng]);
-        accuracyCircle.setLatLng([lat, lng]);
-        accuracyCircle.setRadius(acc);
-      }
-
-      if (drawnPoints.length >= 3) {
-        const isInside = isInsideBoundary([lat, lng], drawnPoints);
-        const distanceToEdge = getMinDistanceToPolygonEdge(lat, lng, drawnPoints);
-        document.getElementById('edgeDistance').innerText = Math.round(distanceToEdge) + " متر";
-
-        const body = document.getElementById('mainBody');
-        const icon = document.getElementById('statusIcon');
-        const title = document.getElementById('statusTitle');
-
-        if (isInside) {
-          if (distanceToEdge <= 15) {
-            stopInstantAlarm();
-            body.className = "min-h-screen warning-pulse-amber text-white flex flex-col font-sans select-none";
-            icon.innerText = "⚠️";
-            title.innerText = `انتبه: تقترب من الحدود! (${Math.round(distanceToEdge)} م)`;
-            triggerAudioBeep(650);
-          } else {
-            stopInstantAlarm();
-            body.className = "min-h-screen bg-emerald-950 text-white flex flex-col font-sans select-none";
-            icon.innerText = "🛡️";
-            title.innerText = "داخل المسار/النطاق الآمن";
-          }
+      if (inside) {
+        if (edgeDistance <= 20) {
+          stopAlarmLoop();
+          playSoftWarningSound();
+          banner.className = "p-3.5 rounded-3xl border text-center shadow-xl space-y-1 status-pulse-amber";
+          icon.innerText = "⚠️";
+          title.innerText = "انتبه! اقتراب من الحدود";
+          title.className = "text-xs font-black text-amber-300";
+          msg.innerText = `أنت على بعد حوالي ${Math.round(edgeDistance)} متر من الخروج!`;
+          msg.className = "text-xs font-bold text-amber-200/80 pt-1 border-t border-amber-500/30 mt-1";
         } else {
-          body.className = "min-h-screen warning-pulse-red text-white flex flex-col font-sans select-none";
-          icon.innerText = "🚨";
-          title.innerText = "خطر: تجاوزت الحدود المحددة!";
-          startInstantAlarm();
-          if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+          stopAlarmLoop();
+          banner.className = "bg-emerald-950/80 p-3.5 rounded-3xl border border-emerald-500/50 text-center shadow-xl space-y-1";
+          icon.innerText = "🛡️";
+          title.innerText = "موقعك آمن داخل الحدود";
+          title.className = "text-xs font-black text-emerald-300";
+          msg.innerText = `المسافة الآمنة من الحدود: ${Math.round(edgeDistance)} متر`;
+          msg.className = "text-xs font-bold text-emerald-200/80 pt-1 border-t border-emerald-500/30 mt-1";
         }
+      } else {
+        if (isTracking) startBreachAlarmLoop();
+        banner.className = "p-3.5 rounded-3xl border text-center shadow-xl space-y-1 status-pulse-red";
+        icon.innerText = "🚨";
+        title.innerText = "تحذير: خارج نطاق المنطقة!";
+        title.className = "text-xs font-black text-rose-200";
+        msg.innerText = `خارج الحدود بمسافة ${Math.round(edgeDistance)} متر! عد فوراً`;
+        msg.className = "text-xs font-bold text-rose-200/80 pt-1 border-t border-rose-500/30 mt-1";
       }
     }
 
     function resetUI() {
-      stopInstantAlarm();
-      document.getElementById('mainBody').className = "min-h-screen bg-slate-900 text-white flex flex-col font-sans select-none";
+      stopAlarmLoop();
+      const banner = document.getElementById('statusBanner');
+      banner.className = "bg-slate-950/90 p-3.5 rounded-3xl border border-slate-800 text-center shadow-xl space-y-1";
       document.getElementById('statusIcon').innerText = "🛰️";
-      document.getElementById('statusTitle').innerText = "جاهز لبدء التتبع";
-      document.getElementById('edgeDistance').innerText = "--";
-      if (userMarker) {
-        map.removeLayer(userMarker); map.removeLayer(accuracyCircle);
-        userMarker = null; accuracyCircle = null;
-      }
+      document.getElementById('statusTitle').innerText = "جاهز لبدء التتبع الجغرافي";
+      document.getElementById('statusTitle').className = "text-xs font-black text-slate-200";
+      document.getElementById('distanceMessage').innerText = "حدد حدود المنطقة على الخريطة ثم اضغط بدء التتبع";
+      document.getElementById('distanceMessage').className = "text-xs font-bold text-slate-400 pt-1 border-t border-slate-800/80 mt-1";
     }
   </script>
 </body>
